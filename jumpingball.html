@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>ジャンプボールゲーム（ジャンプ高さ一定＆ベストスコア）</title>
+  <title>ジャンプボールゲーム（段階的難易度＋タップ対応）</title>
   <style>
     body {
       margin: 0;
@@ -14,12 +14,14 @@
       align-items: center;
       height: 100vh;
       position: relative;
+      touch-action: manipulation;
     }
     canvas {
       display: block;
       background: #222;
       border-radius: 8px;
       box-shadow: 0 0 10px #0f0;
+      touch-action: none;
     }
     #startScreen, #gameOverScreen {
       position: absolute;
@@ -104,6 +106,12 @@
   const restartButton = document.getElementById("restartButton");
 
   let minObstacleFrameGap = 0;
+  let nextObstacleFrame = 0;
+
+  let minObstacles = 8;
+  let maxObstacles = 15;
+  let obstacleSpeedMultiplier = 1.0;
+  let movingObstacleRatio = 0.3;
 
   function loadBestScore() {
     const saved = localStorage.getItem("jumpBallBestScore");
@@ -121,7 +129,7 @@
       radius: 10,
       vx: 3,
       vy: -1,
-      jumpPower: -8 * scrollSpeed  // ジャンプ力をスクロール速度に比例させる
+      jumpPower: -8
     };
 
     obstacles = [];
@@ -130,31 +138,36 @@
     frameCount = 0;
     scrollSpeed = 1;
     gameOver = false;
+    nextObstacleFrame = 60;
+
+    minObstacles = 8;
+    maxObstacles = 15;
+    obstacleSpeedMultiplier = 1.0;
+    movingObstacleRatio = 0.3;
 
     updateObstacleSpawnInterval();
   }
 
   function updateObstacleSpawnInterval() {
-    // ジャンプ滞空時間（秒）
     const t_jump = 2 * Math.abs(ball.jumpPower) / gravity;
-
-    // スクロール速度が上がっても相対的なジャンプ力は維持するために割る
     minObstacleFrameGap = Math.floor(t_jump * 60 * (1 / scrollSpeed));
   }
 
-  function spawnObstacle() {
-    let type = Math.random() < 0.7 ? "basic" : "moving";
-    let height = 5;
+  function updateDifficulty() {
+    const stage = Math.floor(score / 150);
+    minObstacles = 8 + stage;
+    maxObstacles = 15 + stage;
+    scrollSpeed = 1 + 0.2 * stage;
+    obstacleSpeedMultiplier = 1 + 0.2 * stage;
+    movingObstacleRatio = Math.min(0.3 + 0.1 * stage, 0.9);
+  }
 
+  function spawnObstacle() {
+    let type = Math.random() < movingObstacleRatio ? "moving" : "basic";
+    let height = 5;
     let fromLeft = Math.random() < 0.5;
     let width = Math.random() * 50 + 20;
-
-    let x;
-    if (fromLeft) {
-      x = 0;
-    } else {
-      x = canvas.width - width;
-    }
+    let x = fromLeft ? 0 : canvas.width - width;
 
     obstacles.push({
       x,
@@ -163,18 +176,35 @@
       height,
       type,
       dir: fromLeft ? 1 : -1,
-      fromLeft: fromLeft
+      fromLeft
     });
   }
 
-  document.addEventListener("keydown", (e) => {
-    if (e.code === "Space" && !gameOver && gameStarted) {
+  function jump() {
+    if (!gameOver && gameStarted) {
       ball.vy = ball.jumpPower;
+    }
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (e.code === "Space") {
+      jump();
     }
   });
 
+  canvas.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    jump();
+  }, { passive: false });
+
   startButton.addEventListener("click", () => {
     startScreen.classList.add("hidden");
+    gameOverScreen.classList.add("hidden");
+    resetGame();
+    gameStarted = true;
+  });
+
+  restartButton.addEventListener("click", () => {
     gameOverScreen.classList.add("hidden");
     resetGame();
     gameStarted = true;
@@ -185,16 +215,9 @@
       bestScore = score;
       localStorage.setItem("jumpBallBestScore", bestScore);
     }
-
     gameOverScreen.classList.remove("hidden");
     gameStarted = false;
   }
-
-  restartButton.addEventListener("click", () => {
-    gameOverScreen.classList.add("hidden");
-    resetGame();
-    gameStarted = true;
-  });
 
   function update() {
     if (!gameStarted || gameOver) return;
@@ -202,13 +225,8 @@
     frameCount++;
     score = Math.floor(frameCount / 10);
 
-    // スクロール速度とジャンプ力を連動させる（徐々に増加）
-    if (frameCount % 300 === 0) {
-      scrollSpeed += 0.2;
-      ball.vx *= 1.05;
-      ball.jumpPower = -8 * scrollSpeed;
-      updateObstacleSpawnInterval();
-    }
+    updateDifficulty();
+    updateObstacleSpawnInterval();
 
     ball.x += ball.vx;
     if (ball.x - ball.radius < 0 || ball.x + ball.radius > canvas.width) {
@@ -223,11 +241,11 @@
 
       if (obs.type === "moving") {
         if (obs.fromLeft) {
-          obs.x += obs.dir * 2;
+          obs.x += obs.dir * 2 * obstacleSpeedMultiplier;
           if (obs.x < 0) obs.dir = 1;
           if (obs.x + obs.width > 100) obs.dir = -1;
         } else {
-          obs.x += obs.dir * 2;
+          obs.x += obs.dir * 2 * obstacleSpeedMultiplier;
           if (obs.x + obs.width > canvas.width) obs.dir = -1;
           if (obs.x < canvas.width - 100) obs.dir = 1;
         }
@@ -244,7 +262,20 @@
       }
     }
 
-    if (frameCount % (minObstacleFrameGap + 10) === 0) spawnObstacle();
+    if (obstacles.length < minObstacles) {
+      for (let i = obstacles.length; i < minObstacles; i++) {
+        spawnObstacle();
+      }
+    } else if (obstacles.length < maxObstacles && frameCount >= nextObstacleFrame) {
+      const spawnCount = Math.random() < 0.5 ? 1 : 2;
+      for (let i = 0; i < spawnCount; i++) {
+        spawnObstacle();
+      }
+      const variation = Math.floor(Math.random() * (minObstacleFrameGap / 2));
+      nextObstacleFrame = frameCount + minObstacleFrameGap - variation;
+    }
+
+    obstacles = obstacles.filter(obs => obs.y < canvas.height + 50);
 
     if (ball.y > canvas.height) {
       gameOver = true;
