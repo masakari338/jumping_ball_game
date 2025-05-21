@@ -236,6 +236,13 @@
     ball.vy += gravity;
     ball.y += ball.vy + scrollSpeed;
 
+    // 画面上方向の制限（ジャンプ1回分＝約100px程度）
+    const maxJumpHeight = 100;
+    if (ball.y < -maxJumpHeight) {
+      ball.y = -maxJumpHeight;
+      ball.vy = 0;
+    }
+
     for (let obs of obstacles) {
       obs.y += scrollSpeed;
 
